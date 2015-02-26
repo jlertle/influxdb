@@ -2,20 +2,25 @@ package main_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/influxdb/influxdb"
+	"github.com/influxdb/influxdb/influxql"
 	"github.com/influxdb/influxdb/messaging"
 
+	"github.com/influxdb/influxdb/client"
 	main "github.com/influxdb/influxdb/cmd/influxd"
 )
 
@@ -169,6 +174,12 @@ func write(t *testing.T, node *Node, data string) {
 
 	// Until races are solved.
 	time.Sleep(3 * time.Second)
+	//index, err := strconv.ParseUint(resp.Header.Get("X-InfluxDB-Index"), 10, 64)
+	//if err != nil {
+	//t.Fatalf("Couldn't get index. header: %s,  err: %s.", resp.Header.Get("X-InfluxDB-Index"), err)
+	//}
+	//wait(t, testName, nodes, index)
+	//t.Log("Finished writing and waiting")
 }
 
 // query executes the given query against all nodes in the cluster, and verifies no errors occured, and
@@ -656,4 +667,128 @@ func Test3NodeServer(t *testing.T) {
 	nodes := createCombinedNodeCluster(t, testName, dir, 3, 8190, nil)
 
 	runTestsData(t, testName, nodes, "mydb", "myrp")
+}
+
+func Test_ServerSingleGraphiteIntegration(t *testing.T) {
+	//t.Skip()
+	dir := tempfile()
+	nNodes := 1
+	basePort := 8090
+	testName := "graphite integration"
+	now := time.Now().UTC().Round(time.Millisecond)
+	c := main.NewConfig()
+	g := main.Graphite{
+		Enabled:  true,
+		Database: "graphite",
+		Protocol: "TCP",
+	}
+	c.Graphites = append(c.Graphites, g)
+
+	t.Logf("Graphite Connection String: %s\n", g.ConnectionString(c.BindAddress))
+	nodes := createCombinedNodeCluster(t, testName, dir, nNodes, basePort, c)
+
+	createDatabase(t, testName, nodes, "graphite")
+	createRetentionPolicy(t, testName, nodes, "graphite", "raw")
+
+	// Connect to the graphite endpoint we just spun up
+	conn, err := net.Dial("tcp", g.ConnectionString(c.BindAddress))
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	// Get the current index
+	i := index(t, testName, nodes)
+
+	t.Log("Writing data")
+	data := []byte(`cpu 50.554 `)
+	data = append(data, []byte(fmt.Sprintf("%d", now.UnixNano()/1000000))...)
+	data = append(data, '\n')
+	_, err = conn.Write(data)
+	conn.Close()
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	// Wait for sync
+	wait(t, testName, nodes, i+4)
+
+	expectedResults := client.Results{
+		Results: []client.Result{
+			{Series: []influxql.Row{
+				{
+					Name:    "cpu",
+					Columns: []string{"time", "cpu"},
+					Values: [][]interface{}{
+						{now.Format(time.RFC3339Nano), json.Number("50.544")},
+					},
+				}}},
+		},
+	}
+
+	b, err := json.Marshal(&expectedResults)
+	if err != nil {
+		t.Fatal(err)
+		return
+	}
+
+	expected := strings.Trim(expected)
+
+	got, ok := query(t, nodes, "graphite", `select * from "graphite"."raw".cpu`, expected)
+	if !ok {
+		t.Errorf(`Test "%s" failed, expected: %s, got: %s`, testName, expected, got)
+	}
+}
+
+func index(t *testing.T, testName string, nodes Cluster) uint64 {
+	// The first node should be the leader so ask him for the index
+	u := urlFor(nodes[0].url, "", nil)
+	resp, err := http.Get(u.String())
+	defer resp.Body.Close()
+	body, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	i, err := strconv.ParseUint(string(body), 10, 64)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return i
+}
+
+func wait(t *testing.T, testName string, nodes Cluster, index uint64) {
+	// Wait for the index to sync up
+	var wg sync.WaitGroup
+	wg.Add(len(nodes))
+	for _, n := range nodes {
+		go func(t *testing.T, testName string, nodes Cluster, u *url.URL, index uint64) {
+			u = urlFor(u, fmt.Sprintf("wait/%d", index), nil)
+			t.Logf("Test name %s: wait on node %s for index %d", testName, u, index)
+			resp, err := http.Get(u.String())
+			if err != nil {
+				t.Fatalf("Couldn't wait: %s", err)
+			}
+
+			if resp.StatusCode != http.StatusOK {
+				t.Fatalf("query databases failed.  Unexpected status code.  expected: %d, actual %d", http.StatusOK, resp.StatusCode)
+			}
+
+			defer resp.Body.Close()
+			body, err := ioutil.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("Couldn't read body of response: %s", err)
+			}
+			t.Logf("resp.Body: %s\n", string(body))
+
+			i, _ := strconv.Atoi(string(body))
+			if i == 0 {
+				t.Fatalf("Unexpected body: %s", string(body))
+			}
+
+			wg.Done()
+
+		}(t, testName, nodes, n.url, index)
+	}
+	wg.Wait()
 }
