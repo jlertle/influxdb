@@ -673,7 +673,7 @@ func Test_ServerSingleGraphiteIntegration(t *testing.T) {
 	//t.Skip()
 	dir := tempfile()
 	nNodes := 1
-	basePort := 8090
+	basePort := 8790
 	testName := "graphite integration"
 	now := time.Now().UTC().Round(time.Millisecond)
 	c := main.NewConfig()
@@ -701,7 +701,7 @@ func Test_ServerSingleGraphiteIntegration(t *testing.T) {
 	i := index(t, testName, nodes)
 
 	t.Log("Writing data")
-	data := []byte(`cpu 50.554 `)
+	data := []byte(`cpu 12.345 `)
 	data = append(data, []byte(fmt.Sprintf("%d", now.UnixNano()/1000000))...)
 	data = append(data, '\n')
 	_, err = conn.Write(data)
@@ -721,7 +721,7 @@ func Test_ServerSingleGraphiteIntegration(t *testing.T) {
 					Name:    "cpu",
 					Columns: []string{"time", "cpu"},
 					Values: [][]interface{}{
-						{now.Format(time.RFC3339Nano), json.Number("50.544")},
+						{now.Format(time.RFC3339Nano), json.Number("12.345")},
 					},
 				}}},
 		},
