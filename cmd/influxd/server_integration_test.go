@@ -735,7 +735,7 @@ func Test_ServerSingleGraphiteIntegration(t *testing.T) {
 		return
 	}
 
-	expected := strings.Trim(strings(b))
+	expected := strings.TrimSpace(string(b))
 
 	got, ok := query(t, nodes, "graphite", `select * from "graphite"."raw".cpu`, expected)
 	if !ok {
