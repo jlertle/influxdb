@@ -236,7 +236,6 @@ func runTestsData(t *testing.T, testName string, nodes Cluster, database, retent
 
 	// Start by ensuring database and retention policy exist.
 	createDatabase(t, testName, nodes, database)
-	createRetentionPolicy(t, testName, nodes, database, retention)
 
 	// The tests. Within these tests %DB% and %RP% will be replaced with the database and retention passed into
 	// this function.
@@ -353,7 +352,7 @@ func runTestsData(t *testing.T, testName string, nodes Cluster, database, retent
 		{
 			name:     "missing measurement with `GROUP BY *`",
 			query:    `select load from "%DB%"."%RP%".missing group by *`,
-			expected: `{"results":[{"error":"measurement not found: \"mydb\".\"myrp\".\"missing\""}]}`,
+			expected: `{"results":[{"error":"measurement not found: \"%DB%\".\"%RP%\".\"missing\""}]}`,
 		},
 
 		// Metadata display tests
@@ -636,7 +635,7 @@ func TestSingleServer(t *testing.T) {
 
 	nodes := createCombinedNodeCluster(t, testName, dir, 1, 8090)
 
-	runTestsData(t, testName, nodes, "mydb", "myrp")
+	runTestsData(t, testName, nodes, "mydb", "default")
 }
 
 func Test3NodeServer(t *testing.T) {
@@ -652,5 +651,5 @@ func Test3NodeServer(t *testing.T) {
 
 	nodes := createCombinedNodeCluster(t, testName, dir, 3, 8190)
 
-	runTestsData(t, testName, nodes, "mydb", "myrp")
+	runTestsData(t, testName, nodes, "mydb", "default")
 }

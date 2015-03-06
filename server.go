@@ -668,6 +668,13 @@ func (s *Server) applyCreateDatabase(m *messaging.Message) (err error) {
 	db := newDatabase()
 	db.name = c.Name
 
+	// Create the default retention policy.
+	db.policies[c.Name] = &RetentionPolicy{
+		Name:     "default",
+		Duration: 0,
+		ReplicaN: 1,
+	}
+
 	// Persist to metastore.
 	err = s.meta.mustUpdate(m.Index, func(tx *metatx) error { return tx.saveDatabase(db) })
 
